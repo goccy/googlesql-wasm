@@ -1,0 +1,118 @@
+name: build
+
+# End-to-end CI for googlesql-wasm. Runs the wasmify pipeline against
+# the upstream `googlesql/` submodule from a clean checkout, produces
+# `googlesql.wasm` (the wasi-sdk-built artefact) and `googlesql.go`
+# (protoc-gen-wasmify-go's single-file Go binding), uploads both as
+# artifacts, and attaches an SLSA build-provenance attestation.
+#
+# Toolchain (wasi-sdk, binaryen, bazelisk, buf, wasmify CLI itself)
+# lives inside the wasmify base image so this workflow only has to
+# orchestrate inputs → outputs. To bump the toolchain, change the image
+# tag below; everything else (proto, bridge, wasm, go) is regenerated
+# from `wasmify.json` on every run.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write          # for actions/attest-build-provenance OIDC token
+  attestations: write
+
+env:
+  # Pin to a specific wasmify image SHA — bump when wasmify itself
+  # produces breaking changes to the bridge / wasm output. `:edge` is
+  # acceptable for development branches but never on tags.
+  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:edge
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/goccy/wasmify:edge
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache bazel build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+            /tmp/_bazel_root
+          key: bazel-${{ runner.os }}-${{ hashFiles('.gitmodules', 'googlesql/MODULE.bazel*', 'googlesql/WORKSPACE*', 'googlesql/.bazelversion') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      - name: Cache wasm intermediate objects
+        uses: actions/cache@v4
+        with:
+          path: .wasmify/wasm-build/objects
+          key: wasm-objects-${{ hashFiles('wasmify.json', '.gitmodules') }}
+          restore-keys: |
+            wasm-objects-
+
+      # All four wasmify phases run from the cached toolchain image.
+      # `--non-interactive` is also implied by the image's
+      # `WASMIFY_NON_INTERACTIVE=1` env, but pass it explicitly so it
+      # is visible in the workflow log.
+      - name: wasmify build (capture native bazel build)
+        run: wasmify build --non-interactive
+      - name: wasmify generate-build (build.json)
+        run: wasmify generate-build
+      - name: wasmify parse-headers (api-spec.json)
+        run: wasmify parse-headers
+      - name: wasmify gen-proto (.proto + bridge)
+        run: wasmify gen-proto
+      - name: wasmify wasm-build --optimize (googlesql.wasm)
+        run: wasmify wasm-build --optimize --non-interactive
+      - name: buf generate (googlesql.go)
+        run: buf generate
+
+      - name: Stage release artefacts
+        run: |
+          mkdir -p release
+          cp .wasmify/wasm-build/output/googlesql.wasm release/
+          cp googlesql.go release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: googlesql-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/googlesql.wasm
+            release/googlesql.go
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: googlesql-${{ github.sha }}
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          # Release assets: the wasm binary plus one bridge file per
+          # supported language. Currently only Go is supported, so
+          # `googlesql.go` is the sole bridge artefact. When a new
+          # language plugin is added, append its bridge file here.
+          files: |
+            release/googlesql.wasm
+            release/googlesql.go

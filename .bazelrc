@@ -1,0 +1,10 @@
+# Use preinstalled host tools instead of rules_foreign_cc's vendored
+# bootstrap.  The vendored GNU make's configure emits `#define ssize_t int`
+# as a fallback when the SDK's ssize_t test fails, which collides with
+# macOS 26.2 SDK's `typedef __darwin_ssize_t ssize_t`.  Using the host tools
+# sidesteps the whole bootstrap.
+build --extra_toolchains=@rules_foreign_cc//toolchains:preinstalled_autoconf_toolchain
+build --extra_toolchains=@rules_foreign_cc//toolchains:preinstalled_automake_toolchain
+build --extra_toolchains=@rules_foreign_cc//toolchains:preinstalled_m4_toolchain
+build --extra_toolchains=@rules_foreign_cc//toolchains:preinstalled_make_toolchain
+build --extra_toolchains=@rules_foreign_cc//toolchains:preinstalled_ninja_toolchain

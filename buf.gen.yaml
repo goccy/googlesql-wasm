@@ -1,0 +1,13 @@
+version: v2
+inputs:
+  - directory: .
+    paths:
+      - proto/googlesql.proto
+plugins:
+  - local: protoc-gen-wasmify-go
+    out: .
+    opt:
+      # Must match the .proto's `option go_package` prefix. The
+      # bridge writes go_package=github.com/goccy/go-googlesql, so
+      # the generated Go file lands at the root of this work dir.
+      - module=github.com/goccy/go-googlesql
