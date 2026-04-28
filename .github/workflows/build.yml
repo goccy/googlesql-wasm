@@ -20,6 +20,8 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -112,6 +114,10 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/attest-build-provenance@v2
+        # Provenance attestation only on pushes to main and v* tags;
+        # pull_request runs validate the pipeline but do not produce
+        # signed releases.
+        if: github.event_name == 'push'
         with:
           subject-path: |
             release/googlesql.wasm
