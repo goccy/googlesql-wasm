@@ -109,4 +109,10 @@ jobs:
           path: release
       - uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          # Release assets: the wasm binary plus one bridge file per
+          # supported language. Currently only Go is supported, so
+          # `googlesql.go` is the sole bridge artefact. When a new
+          # language plugin is added, append its bridge file here.
+          files: |
+            release/googlesql.wasm
+            release/googlesql.go
