@@ -1,0 +1,3 @@
+[submodule "googlesql"]
+	path = googlesql
+	url = https://github.com/google/googlesql.git

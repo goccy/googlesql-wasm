@@ -1,0 +1,428 @@
+{
+  "version": "1",
+  "upstream": {
+    "path": "./googlesql",
+    "commit": "36dd14aa0657ea299725504bc0f938732f58f380",
+    "branch": "master"
+  },
+  "project": {
+    "name": "googlesql",
+    "root_dir": "./googlesql",
+    "language": "c++",
+    "language_standard": "c++17"
+  },
+  "build_system": {
+    "type": "bazel",
+    "version": "7.6.1",
+    "files": [
+      "MODULE.bazel",
+      "BUILD"
+    ]
+  },
+  "targets": [
+    {
+      "name": "analyzer",
+      "type": "library",
+      "build_target": "//googlesql/public:analyzer",
+      "description": "Full SQL analyzer: parser + resolver + catalog resolution + rewriters. Main entry point for most users (AnalyzeStatement, AnalyzeExpression, ParseStatement)."
+    },
+    {
+      "name": "evaluator",
+      "type": "library",
+      "build_target": "//googlesql/public:evaluator",
+      "description": "SQL expression/query evaluator (runs over PreparedExpression/PreparedQuery). Uses the analyzer output to compute results in-process."
+    },
+    {
+      "name": "evaluator_lite",
+      "type": "library",
+      "build_target": "//googlesql/public:evaluator_lite",
+      "description": "Lightweight variant of evaluator with fewer dependencies."
+    },
+    {
+      "name": "sql_formatter",
+      "type": "library",
+      "build_target": "//googlesql/public:sql_formatter",
+      "description": "SQL pretty-printer / formatter (FormatSQL)."
+    },
+    {
+      "name": "simple_catalog",
+      "type": "library",
+      "build_target": "//googlesql/public:simple_catalog",
+      "description": "In-memory Catalog implementation for feeding schema info to the analyzer."
+    },
+    {
+      "name": "analyzer_options",
+      "type": "library",
+      "build_target": "//googlesql/public:analyzer_options",
+      "description": "AnalyzerOptions (language options, parameter modes, error format, etc.)."
+    },
+    {
+      "name": "language_options",
+      "type": "library",
+      "build_target": "//googlesql/public:language_options",
+      "description": "LanguageOptions: which SQL features/dialects are enabled."
+    },
+    {
+      "name": "constant_evaluator",
+      "type": "library",
+      "build_target": "//googlesql/public:constant_evaluator",
+      "description": "Evaluates compile-time constant SQL expressions."
+    },
+    {
+      "name": "coercer",
+      "type": "library",
+      "build_target": "//googlesql/public:coercer",
+      "description": "Type coercion rules (implicit/explicit casts, common supertype)."
+    },
+    {
+      "name": "builtin_function",
+      "type": "library",
+      "build_target": "//googlesql/public:builtin_function",
+      "description": "Definitions and metadata for built-in SQL functions."
+    },
+    {
+      "name": "function",
+      "type": "library",
+      "build_target": "//googlesql/public:function",
+      "description": "Function and FunctionSignature types used by catalogs and the analyzer."
+    },
+    {
+      "name": "type",
+      "type": "library",
+      "build_target": "//googlesql/public:type",
+      "description": "SQL type system (Type, TypeFactory, TypeKind)."
+    },
+    {
+      "name": "value",
+      "type": "library",
+      "build_target": "//googlesql/public:value",
+      "description": "SQL Value (runtime value representation — int64/string/array/struct/...)."
+    },
+    {
+      "name": "catalog",
+      "type": "library",
+      "build_target": "//googlesql/public:catalog",
+      "description": "Abstract Catalog interface (schema lookup)."
+    },
+    {
+      "name": "error_helpers",
+      "type": "library",
+      "build_target": "//googlesql/public:error_helpers",
+      "description": "Error formatting / location helpers."
+    },
+    {
+      "name": "execute_query",
+      "type": "executable",
+      "build_target": "//googlesql/tools/execute_query:execute_query",
+      "description": "Interactive CLI that parses, analyzes, and executes a SQL statement end-to-end."
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "protobuf",
+      "type": "library",
+      "required": true
+    },
+    {
+      "name": "abseil-cpp",
+      "type": "library",
+      "required": true
+    },
+    {
+      "name": "icu",
+      "type": "library",
+      "required": true
+    },
+    {
+      "name": "re2",
+      "type": "library",
+      "required": true
+    }
+  ],
+  "required_tools": [
+    {
+      "name": "bazel",
+      "installed": true,
+      "version": "7.6.1"
+    },
+    {
+      "name": "git",
+      "installed": true
+    },
+    {
+      "name": "python3",
+      "installed": true
+    },
+    {
+      "name": "make",
+      "installed": true
+    },
+    {
+      "name": "curl",
+      "installed": true
+    },
+    {
+      "name": "default-jdk",
+      "installed": false,
+      "detect_cmd": "command -v javac",
+      "install": {
+        "darwin": {
+          "commands": [
+            "brew install openjdk"
+          ]
+        },
+        "debian": {
+          "commands": [
+            "sudo -n apt-get update",
+            "sudo -n apt-get install -y default-jdk"
+          ]
+        }
+      }
+    },
+    {
+      "name": "zip-unzip",
+      "installed": true,
+      "detect_cmd": "command -v zip \u0026\u0026 command -v unzip",
+      "install": {
+        "darwin": {
+          "commands": [
+            "brew install zip unzip"
+          ]
+        },
+        "debian": {
+          "commands": [
+            "sudo -n apt-get update",
+            "sudo -n apt-get install -y zip unzip"
+          ]
+        }
+      }
+    },
+    {
+      "name": "autoconf",
+      "installed": false,
+      "install": {
+        "darwin": {
+          "commands": [
+            "brew install autoconf"
+          ]
+        },
+        "debian": {
+          "commands": [
+            "sudo -n apt-get update",
+            "sudo -n apt-get install -y autoconf"
+          ]
+        }
+      }
+    },
+    {
+      "name": "automake",
+      "installed": false,
+      "install": {
+        "darwin": {
+          "commands": [
+            "brew install automake"
+          ]
+        },
+        "debian": {
+          "commands": [
+            "sudo -n apt-get update",
+            "sudo -n apt-get install -y automake"
+          ]
+        }
+      }
+    },
+    {
+      "name": "libtool",
+      "installed": false,
+      "install": {
+        "darwin": {
+          "commands": [
+            "brew install libtool"
+          ]
+        },
+        "debian": {
+          "commands": [
+            "sudo -n apt-get update",
+            "sudo -n apt-get install -y libtool"
+          ]
+        }
+      }
+    },
+    {
+      "name": "ninja",
+      "installed": false,
+      "install": {
+        "darwin": {
+          "commands": [
+            "brew install ninja"
+          ]
+        },
+        "debian": {
+          "commands": [
+            "sudo -n apt-get update",
+            "sudo -n apt-get install -y ninja-build"
+          ]
+        }
+      }
+    }
+  ],
+  "build_commands": {
+    "configure": null,
+    "build": "bazel build -c opt"
+  },
+  "user_selection": {
+    "target_names": [
+      "analyzer",
+      "sql_formatter"
+    ],
+    "build_type": "library"
+  },
+  "bridge": {
+    "ExternalTypes": [
+      "absl::Status",
+      "absl::StatusOr",
+      "absl::string_view",
+      "absl::Span",
+      "absl::Time",
+      "absl::TimeZone",
+      "googlesql_base::Status",
+      "googlesql_base::StatusOr",
+      "RE2"
+    ],
+    "ErrorTypes": {
+      "absl::Status": "if (!{result}.ok()) { _pw.write_error(std::string({result}.message())); }",
+      "absl::StatusOr": "if (!{result}.ok()) { _pw.write_error(std::string({result}.status().message())); }",
+      "googlesql_base::Status": "if (!{result}.ok()) { _pw.write_error(std::string({result}.message())); }",
+      "googlesql_base::StatusOr": "if (!{result}.ok()) { _pw.write_error(std::string({result}.status().message())); }"
+    },
+    "SkipClasses": [
+      "googlesql::SimpleModel"
+    ],
+    "SkipHeaders": [
+      "googlesql/parser/textmapper_lexer_adapter.h"
+    ],
+    "GoPackage": "github.com/goccy/go-googlesql;googlesql",
+    "ExportFunctions": [
+      "googlesql::ParseStatement",
+      "googlesql::ParseScript",
+      "googlesql::ParseNextScriptStatement",
+      "googlesql::ParseNextStatement",
+      "googlesql::ParseExpression",
+      "googlesql::ParseType",
+      "googlesql::AnalyzeStatement",
+      "googlesql::AnalyzeStatementFromParserAST",
+      "googlesql::AnalyzeNextStatement",
+      "googlesql::AnalyzeExpression",
+      "googlesql::AnalyzeType",
+      "googlesql::ExtractTableNamesFromStatement",
+      "googlesql::ExtractTableNamesFromScript",
+      "googlesql::ExtractTableNamesFromNextStatement",
+      "googlesql::ValidateAnalyzerOptions",
+      "googlesql::SimpleCatalog",
+      "googlesql::AnalyzerOptions",
+      "googlesql::LanguageOptions",
+      "googlesql::ParserOptions",
+      "googlesql::Unparse",
+      "googlesql::FormatSql"
+    ],
+    "ExportEnumPrefixes": [
+      "googlesql::Resolved",
+      "googlesql::AST",
+      "googlesql::Function",
+      "googlesql::Signature",
+      "googlesql::Parameter",
+      "googlesql::ParseLocation",
+      "googlesql::NameResolution",
+      "googlesql::Product",
+      "googlesql::TypeKind",
+      "googlesql::LanguageFeature",
+      "googlesql::LanguageVersion",
+      "googlesql::FieldFormat",
+      "googlesql::ErrorMessage",
+      "googlesql::SchemaObject",
+      "googlesql::Statement",
+      "googlesql::WindowPartitioning",
+      "googlesql::IntervalCompareMode",
+      "googlesql::WideNumberMode"
+    ],
+    "SkipStaticMethods": [
+      "default_instance",
+      "internal_default_instance",
+      "descriptor",
+      "GetDescriptor",
+      "GetReflection",
+      "GetMetadata"
+    ],
+    "ValueViewTypes": [
+      "absl::Span"
+    ],
+    "ErrorOnlyReturnTypes": [
+      "absl::Status"
+    ],
+    "ErrorReconstruct": {
+      "absl::Status": {
+        "OkExpr": "absl::OkStatus()",
+        "ErrorExpr": "absl::InternalError({err_msg})"
+      }
+    },
+    "UnsupportedStringTypes": [
+      "string_view",
+      "Cord"
+    ],
+    "ExtraStringTypes": [
+      "absl::string_view"
+    ],
+    "MapLikeTypePrefixes": [
+      "absl::flat_hash_map",
+      "absl::node_hash_map",
+      "google::protobuf::Map"
+    ],
+    "SetLikeTypePrefixes": [
+      "absl::flat_hash_set"
+    ]
+  },
+  "skip": {
+    "files": [
+      {
+        "path": "external/abseil-cpp~/absl/debugging/symbolize.cc",
+        "reason": "stack symbolization is host-platform-specific and not bridgeable to wasi"
+      },
+      {
+        "path": "external/abseil-cpp~/absl/debugging/stacktrace.cc",
+        "reason": "stack unwind helpers depend on host arch (no wasm32 backend)"
+      },
+      {
+        "path": "external/abseil-cpp~/absl/base/internal/raw_logging.cc",
+        "reason": "uses platform-specific syscalls; logging is unused in the bridged API surface"
+      },
+      {
+        "path": "external/abseil-cpp~/absl/time/internal/cctz/src/time_zone_libc.cc",
+        "reason": "libc time-zone backend not present in wasi-libc"
+      },
+      {
+        "path": "external/abseil-cpp~/absl/log/internal/globals.cc",
+        "reason": "uses platform-specific log infrastructure; bridged API surface does not log"
+      }
+    ]
+  },
+  "phases": {
+    "gen-proto": {
+      "completed_at": "2026-04-28T02:27:47Z",
+      "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
+      "output_files": [
+        "proto/googlesql.proto",
+        "proto/wasmify/options.proto",
+        "bridge/api_bridge.cc",
+        "bridge/api_bridge.h"
+      ]
+    },
+    "parse-headers": {
+      "completed_at": "2026-04-28T02:27:46Z",
+      "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
+      "output_files": [
+        "api-spec.json"
+      ]
+    }
+  },
+  "analyzed_at": "2026-04-19T22:45:00Z"
+}
