@@ -7,10 +7,14 @@ name: build
 # artifacts, and attaches an SLSA build-provenance attestation.
 #
 # Toolchain (wasi-sdk, binaryen, bazelisk, buf, wasmify CLI itself)
-# lives inside the wasmify base image so this workflow only has to
-# orchestrate inputs → outputs. To bump the toolchain, change the image
-# tag below; everything else (proto, bridge, wasm, go) is regenerated
-# from `wasmify.json` on every run.
+# lives inside the wasmify base image, so the workflow only has to
+# orchestrate inputs -> outputs. The image is run via `docker run`
+# rather than the GHA `container:` directive: googlesql's bazel build
+# downloads a multi-GB LLVM toolchain, and the runner only has ~14 GB
+# free on `/` out of the box. We need a free-disk-space step on the
+# host before the container starts, which is incompatible with a
+# `container:`-scoped job (every step in such a job runs *inside* the
+# container, so it cannot reach the host filesystem).
 
 on:
   push:
@@ -24,30 +28,42 @@ permissions:
   attestations: write
 
 env:
-  # Pin to a specific wasmify image SHA — bump when wasmify itself
-  # produces breaking changes to the bridge / wasm output. `:edge` is
-  # acceptable for development branches but never on tags.
+  # Pin to a specific wasmify image SHA when bumping wasmify produces
+  # breaking changes to the bridge / wasm output. `:edge` is acceptable
+  # for development branches but never on tags.
   WASMIFY_IMAGE: ghcr.io/goccy/wasmify:edge
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/goccy/wasmify:edge
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Free disk space on the runner
+        # ubuntu-latest ships ~14 GB free on `/`; bazel's googlesql
+        # build alone pulls a ~3-4 GB LLVM toolchain, plus external
+        # repositories and build outputs. Reclaiming the preinstalled
+        # Android SDK / .NET / Haskell trees gets us to ~45 GB free,
+        # which has comfortable headroom for the full build.
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Pull wasmify toolchain image
+        run: docker pull "$WASMIFY_IMAGE"
+
       - name: Cache bazel build outputs
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/bazel
-            /tmp/_bazel_root
+          path: ${{ github.workspace }}/.bazel-cache
           key: bazel-${{ runner.os }}-${{ hashFiles('.gitmodules', 'googlesql/MODULE.bazel*', 'googlesql/WORKSPACE*', 'googlesql/.bazelversion') }}
           restore-keys: |
             bazel-${{ runner.os }}-
@@ -60,22 +76,28 @@ jobs:
           restore-keys: |
             wasm-objects-
 
-      # All four wasmify phases run from the cached toolchain image.
-      # `--non-interactive` is also implied by the image's
-      # `WASMIFY_NON_INTERACTIVE=1` env, but pass it explicitly so it
-      # is visible in the workflow log.
-      - name: wasmify build (capture native bazel build)
-        run: wasmify build --non-interactive
-      - name: wasmify generate-build (build.json)
-        run: wasmify generate-build
-      - name: wasmify parse-headers (api-spec.json)
-        run: wasmify parse-headers
-      - name: wasmify gen-proto (.proto + bridge)
-        run: wasmify gen-proto
-      - name: wasmify wasm-build --optimize (googlesql.wasm)
-        run: wasmify wasm-build --optimize --non-interactive
-      - name: buf generate (googlesql.go)
-        run: buf generate
+      - name: Run wasmify pipeline inside toolchain image
+        # The workspace is bind-mounted into /work; bazel's external
+        # repository cache is bind-mounted from a workspace-relative
+        # path so actions/cache above can read/write it. Each phase
+        # passes --non-interactive explicitly even though the image
+        # also exports WASMIFY_NON_INTERACTIVE=1, so the workflow log
+        # makes the contract obvious.
+        run: |
+          mkdir -p .bazel-cache
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            -v "$PWD/.bazel-cache:/root/.cache/bazel" \
+            -e WASMIFY_NON_INTERACTIVE=1 \
+            "$WASMIFY_IMAGE" \
+            bash -ceuxo pipefail '
+              wasmify build --non-interactive
+              wasmify generate-build
+              wasmify parse-headers
+              wasmify gen-proto
+              wasmify wasm-build --optimize --non-interactive
+              buf generate
+            '
 
       - name: Stage release artefacts
         run: |
