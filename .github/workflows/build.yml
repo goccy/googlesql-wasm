@@ -2,19 +2,40 @@ name: build
 
 # End-to-end CI for googlesql-wasm. Runs the wasmify pipeline against
 # the upstream `googlesql/` submodule from a clean checkout, produces
-# `googlesql.wasm` (the wasi-sdk-built artefact) and `googlesql.go`
+# `googlesql.wasm` (the wasi-sdk-built artifact) and `googlesql.go`
 # (protoc-gen-wasmify-go's single-file Go binding), uploads both as
 # artifacts, and attaches an SLSA build-provenance attestation.
 #
 # Toolchain (wasi-sdk, binaryen, bazelisk, buf, wasmify CLI itself)
-# lives inside the wasmify base image, so the workflow only has to
-# orchestrate inputs -> outputs. The image is run via `docker run`
-# rather than the GHA `container:` directive: googlesql's bazel build
-# downloads a multi-GB LLVM toolchain, and the runner only has ~14 GB
-# free on `/` out of the box. We need a free-disk-space step on the
-# host before the container starts, which is incompatible with a
-# `container:`-scoped job (every step in such a job runs *inside* the
-# container, so it cannot reach the host filesystem).
+# lives inside the wasmify base image. On top of that, this workflow
+# maintains a project-specific cache image
+# (ghcr.io/<owner>/googlesql-wasm-cache) keyed on the googlesql
+# submodule SHA. A successful cold build's container is `docker
+# commit`ed as the cache image — its layer contains the bazel
+# external/action cache at /root/.cache/bazel and the generated
+# workspace files at /cache/output. The wasmify pipeline runs on
+# every workflow invocation; a cache hit just means the generated
+# files are restored to the workspace beforehand and the build
+# container is started from the cache image (so bazel sees a warm
+# /root/.cache/bazel and wasmify wasm-build sees pre-built objects),
+# which makes the same pipeline finish incrementally instead of cold.
+#
+# Cache lifecycle (kept inside this workflow — no separate scheduled
+# job): each run does an opportunistic `docker pull` of
+# `<image>:<submodule_sha>`. Hit -> extract `/cache/output/.` into
+# the workspace and run the pipeline inside the cache image. Miss ->
+# run the pipeline inside the wasmify image, then `docker commit`
+# the post-build container and push as `<image>:<submodule_sha>` and
+# `<image>:latest`. Only `push` events publish — `pull_request` runs
+# may read from the cache but never write.
+#
+# The image is run via `docker run` rather than the GHA `container:`
+# directive: googlesql's bazel build downloads a multi-GB LLVM
+# toolchain on a cache miss, and the runner only has ~14 GB free on
+# `/` out of the box. We need a free-disk-space step on the host
+# before the container starts, which is incompatible with a
+# `container:`-scoped job (every step in such a job runs *inside*
+# the container, so it cannot reach the host filesystem).
 
 on:
   push:
@@ -26,25 +47,23 @@ on:
 
 permissions:
   contents: read
+  packages: write          # for cache image push to ghcr
   id-token: write          # for actions/attest-build-provenance OIDC token
   attestations: write
 
 env:
-  # Pin to a specific wasmify image SHA when bumping wasmify produces
-  # breaking changes to the bridge / wasm output. `:edge` is acceptable
-  # for development branches but never on tags.
   WASMIFY_IMAGE: ghcr.io/goccy/wasmify:edge
+  CACHE_IMAGE: ghcr.io/${{ github.repository_owner }}/googlesql-wasm-cache
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space on the runner
-        # ubuntu-latest ships ~14 GB free on `/`; bazel's googlesql
-        # build alone pulls a ~3-4 GB LLVM toolchain, plus external
-        # repositories and build outputs. Reclaiming the preinstalled
-        # Android SDK / .NET / Haskell trees gets us to ~45 GB free,
-        # which has comfortable headroom for the full build.
+        # ubuntu-latest ships ~14 GB free on `/`; even with a cache
+        # hit the image pull plus extracted outputs blow past that.
+        # Reclaiming the preinstalled Android SDK / .NET / Haskell
+        # trees gets us to ~45 GB free.
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
@@ -59,49 +78,126 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Pull wasmify toolchain image
-        run: docker pull "$WASMIFY_IMAGE"
-
-      - name: Cache bazel build outputs
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.bazel-cache
-          key: bazel-${{ runner.os }}-${{ hashFiles('.gitmodules', 'googlesql/MODULE.bazel*', 'googlesql/WORKSPACE*', 'googlesql/.bazelversion') }}
-          restore-keys: |
-            bazel-${{ runner.os }}-
-
-      - name: Cache wasm intermediate objects
-        uses: actions/cache@v4
-        with:
-          path: .wasmify/wasm-build/objects
-          key: wasm-objects-${{ hashFiles('wasmify.json', '.gitmodules') }}
-          restore-keys: |
-            wasm-objects-
-
-      - name: Run wasmify pipeline inside toolchain image
-        # The workspace is bind-mounted into /work; bazel's external
-        # repository cache is bind-mounted from a workspace-relative
-        # path so actions/cache above can read/write it. Each phase
-        # passes --non-interactive explicitly even though the image
-        # also exports WASMIFY_NON_INTERACTIVE=1, so the workflow log
-        # makes the contract obvious.
+      - name: Resolve cache image tag from googlesql submodule SHA
+        id: cache_key
         run: |
-          mkdir -p .bazel-cache
-          docker run --rm \
-            -v "$PWD:/work" -w /work \
-            -v "$PWD/.bazel-cache:/root/.cache/bazel" \
-            -e WASMIFY_NON_INTERACTIVE=1 \
-            "$WASMIFY_IMAGE" \
-            bash -ceuxo pipefail '
-              wasmify build --non-interactive
-              wasmify generate-build
-              wasmify parse-headers
-              wasmify gen-proto
-              wasmify wasm-build --optimize --non-interactive
-              buf generate
-            '
+          submodule_sha=$(git -C googlesql rev-parse HEAD)
+          echo "submodule_sha=${submodule_sha}" >> "$GITHUB_OUTPUT"
+          echo "tag=${CACHE_IMAGE}:${submodule_sha}" >> "$GITHUB_OUTPUT"
 
-      - name: Stage release artefacts
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Try to pull cache image
+        # `docker pull` exits non-zero when the tag does not exist.
+        # `continue-on-error` so that a cache miss is not a failure;
+        # downstream steps branch on the recorded `hit` flag.
+        id: cache_pull
+        continue-on-error: true
+        run: |
+          if docker pull "${{ steps.cache_key.outputs.tag }}"; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore generated files from cache image (warm path)
+        # Cache hit: the cold pipeline's outputs live at /cache/output
+        # in the cache image. Copy them into the workspace so that
+        # wasmify's per-phase incremental detection (mtime / hash) can
+        # short-circuit unchanged work. `docker create` + `docker cp`
+        # is cheaper than `docker run` because no container is started.
+        if: steps.cache_pull.outputs.hit == 'true'
+        run: |
+          container=$(docker create "${{ steps.cache_key.outputs.tag }}")
+          docker cp "${container}:/cache/output/." "$PWD/"
+          docker rm -f "${container}"
+          echo "--- restored from cache ---"
+          ls -la .wasmify 2>/dev/null | head -10 || true
+          ls -la googlesql.go 2>/dev/null || true
+
+      - name: Resolve build base image
+        # Cache hit -> use the cache image as the build container's
+        # base. The cache image's /root/.cache/bazel is warm, so
+        # `wasmify build` finishes incrementally instead of doing a
+        # cold bazel run + LLVM toolchain fetch.
+        # Cache miss -> use the wasmify toolchain image (pull it
+        # explicitly so the pull cost is its own step in the log).
+        id: base
+        run: |
+          if [ "${{ steps.cache_pull.outputs.hit }}" = "true" ]; then
+            echo "image=${{ steps.cache_key.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            docker pull "$WASMIFY_IMAGE"
+            echo "image=$WASMIFY_IMAGE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run wasmify pipeline
+        # Always runs end-to-end. On a cache hit the input state is
+        # already populated, so `wasmify build` (bazel), wasm-build
+        # (wasi-sdk compile), and `buf generate` finish almost
+        # instantly when nothing has changed. On a miss they run
+        # cold and produce the artifacts from scratch.
+        #
+        # Container is started detached with `sleep infinity` so the
+        # post-build state can be `docker commit`ed (cache miss only).
+        # Bind-mount the workspace so generated files land on the
+        # host directly — `upload-artifact` and "Stage release" pick
+        # them up without a separate `docker cp` out.
+        run: |
+          docker run -d --name wasmify-build \
+            -v "$PWD:/work" -w /work \
+            -e WASMIFY_NON_INTERACTIVE=1 \
+            --entrypoint sleep \
+            "${{ steps.base.outputs.image }}" infinity
+          docker exec wasmify-build bash -ceuxo pipefail '
+            wasmify build --non-interactive
+            wasmify generate-build
+            wasmify parse-headers
+            wasmify gen-proto
+            wasmify wasm-build --optimize --non-interactive
+            buf generate
+          '
+
+      - name: Commit and push cache image
+        # Only on cache miss + push events. PR runs read from the
+        # cache but never write, so a PR cannot poison the registry
+        # with partial state. A cache hit means the existing image
+        # is still valid — re-publishing would just churn the digest.
+        #
+        # The bind-mount means /work writes are not part of the
+        # container's committable layer. Copy every generated path
+        # the .gitignore advertises as CI-regenerated into a
+        # non-mounted path (/cache/output) inside the container,
+        # then `docker commit` it. /root/.cache/bazel is naturally
+        # captured in the same commit because it lives outside the
+        # bind-mount.
+        if: |
+          steps.cache_pull.outputs.hit != 'true' &&
+          github.event_name == 'push'
+        run: |
+          docker exec wasmify-build mkdir -p /cache/output
+          for path in .wasmify build.json api-spec.json proto bridge googlesql.wasm googlesql.go; do
+            if [ -e "$path" ]; then
+              docker cp "$path" "wasmify-build:/cache/output/"
+            fi
+          done
+          docker commit wasmify-build "${{ steps.cache_key.outputs.tag }}"
+          docker tag "${{ steps.cache_key.outputs.tag }}" "${CACHE_IMAGE}:latest"
+          docker push "${{ steps.cache_key.outputs.tag }}"
+          docker push "${CACHE_IMAGE}:latest"
+
+      - name: Stop build container
+        # Always run so a failed pipeline does not leak the persistent
+        # container into a successor step.
+        if: always()
+        run: docker rm -f wasmify-build 2>/dev/null || true
+
+      - name: Stage release artifacts
         run: |
           mkdir -p release
           cp .wasmify/wasm-build/output/googlesql.wasm release/
@@ -114,10 +210,11 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/attest-build-provenance@v2
-        # Provenance attestation only on pushes to main and v* tags;
-        # pull_request runs validate the pipeline but do not produce
-        # signed releases.
-        if: github.event_name == 'push'
+        # Provenance attestation only runs on `push` events and only
+        # when the repo is public — the attestations API rejects
+        # writes from user-owned private repos. PR runs validate the
+        # pipeline but do not produce signed releases.
+        if: github.event_name == 'push' && github.event.repository.visibility == 'public'
         with:
           subject-path: |
             release/googlesql.wasm
@@ -139,7 +236,7 @@ jobs:
         with:
           # Release assets: the wasm binary plus one bridge file per
           # supported language. Currently only Go is supported, so
-          # `googlesql.go` is the sole bridge artefact. When a new
+          # `googlesql.go` is the sole bridge artifact. When a new
           # language plugin is added, append its bridge file here.
           files: |
             release/googlesql.wasm
