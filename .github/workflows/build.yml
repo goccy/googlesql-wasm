@@ -10,23 +10,24 @@ name: build
 # lives inside the wasmify base image. On top of that, this workflow
 # maintains a project-specific cache image
 # (ghcr.io/<owner>/googlesql-wasm-cache) keyed on the googlesql
-# submodule SHA. The cache image bakes EVERY file the cold pipeline
-# generates — `.wasmify/`, the captured proto + bridge sources, the
-# wasm-build outputs (including `googlesql.wasm`), and the buf-
-# generated `googlesql.go` — so a run that finds a tag matching the
-# current submodule SHA can skip the wasmify pipeline entirely and
-# just `docker cp` the prebuilt outputs into the workspace.
+# submodule SHA. A successful cold build's container is `docker
+# commit`ed as the cache image — its layer contains the bazel
+# external/action cache at /root/.cache/bazel and the generated
+# workspace files at /cache/output. The wasmify pipeline runs on
+# every workflow invocation; a cache hit just means the generated
+# files are restored to the workspace beforehand and the build
+# container is started from the cache image (so bazel sees a warm
+# /root/.cache/bazel and wasmify wasm-build sees pre-built objects),
+# which makes the same pipeline finish incrementally instead of cold.
 #
 # Cache lifecycle (kept inside this workflow — no separate scheduled
 # job): each run does an opportunistic `docker pull` of
-# `<image>:<submodule-sha>`. Hit -> extract `/cache/output/.` into the
-# workspace and stage the release artifacts directly. Miss -> run the
-# full cold pipeline inside a persistent container, copy generated
-# files into `/cache/output` inside it, then `docker commit` the
-# container as `<image>:<submodule_sha>` and `<image>:latest`. Only
-# `push` events publish — `pull_request` runs may read from the
-# cache but never write, so a PR cannot poison the registry with
-# partial state.
+# `<image>:<submodule_sha>`. Hit -> extract `/cache/output/.` into
+# the workspace and run the pipeline inside the cache image. Miss ->
+# run the pipeline inside the wasmify image, then `docker commit`
+# the post-build container and push as `<image>:<submodule_sha>` and
+# `<image>:latest`. Only `push` events publish — `pull_request` runs
+# may read from the cache but never write.
 #
 # The image is run via `docker run` rather than the GHA `container:`
 # directive: googlesql's bazel build downloads a multi-GB LLVM
@@ -94,7 +95,7 @@ jobs:
       - name: Try to pull cache image
         # `docker pull` exits non-zero when the tag does not exist.
         # `continue-on-error` so that a cache miss is not a failure;
-        # the next step branches on the recorded `hit` flag.
+        # downstream steps branch on the recorded `hit` flag.
         id: cache_pull
         continue-on-error: true
         run: |
@@ -105,38 +106,55 @@ jobs:
           fi
 
       - name: Restore generated files from cache image (warm path)
-        # Cache hit: every file the cold pipeline produced is already
-        # baked at /cache/output. `docker create` + `docker cp` is
-        # cheaper than `docker run`; we never start a container, just
-        # spawn a stopped one to pull files out of.
+        # Cache hit: the cold pipeline's outputs live at /cache/output
+        # in the cache image. Copy them into the workspace so that
+        # wasmify's per-phase incremental detection (mtime / hash) can
+        # short-circuit unchanged work. `docker create` + `docker cp`
+        # is cheaper than `docker run` because no container is started.
         if: steps.cache_pull.outputs.hit == 'true'
         run: |
           container=$(docker create "${{ steps.cache_key.outputs.tag }}")
           docker cp "${container}:/cache/output/." "$PWD/"
           docker rm -f "${container}"
           echo "--- restored from cache ---"
-          ls -la .wasmify/wasm-build/output/ googlesql.go 2>/dev/null || true
+          ls -la .wasmify 2>/dev/null | head -10 || true
+          ls -la googlesql.go 2>/dev/null || true
 
-      - name: Pull wasmify toolchain image (cold path)
-        if: steps.cache_pull.outputs.hit != 'true'
-        run: docker pull "$WASMIFY_IMAGE"
-
-      - name: Run wasmify pipeline (cold path)
-        # Cache miss: run the full pipeline including `wasmify build`.
-        # The container is started detached with `sleep infinity` so
-        # the post-build state can be `docker commit`ed as the cache
-        # image. Bind-mounting the workspace lets generated files
-        # land on the host directly — `upload-artifact` and "Stage
-        # release" pick them up without needing a separate `docker
-        # cp` out.
-        if: steps.cache_pull.outputs.hit != 'true'
+      - name: Resolve build base image
+        # Cache hit -> use the cache image as the build container's
+        # base. The cache image's /root/.cache/bazel is warm, so
+        # `wasmify build` finishes incrementally instead of doing a
+        # cold bazel run + LLVM toolchain fetch.
+        # Cache miss -> use the wasmify toolchain image (pull it
+        # explicitly so the pull cost is its own step in the log).
+        id: base
         run: |
-          docker run -d --name wasmify-cold \
+          if [ "${{ steps.cache_pull.outputs.hit }}" = "true" ]; then
+            echo "image=${{ steps.cache_key.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            docker pull "$WASMIFY_IMAGE"
+            echo "image=$WASMIFY_IMAGE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run wasmify pipeline
+        # Always runs end-to-end. On a cache hit the input state is
+        # already populated, so `wasmify build` (bazel), wasm-build
+        # (wasi-sdk compile), and `buf generate` finish almost
+        # instantly when nothing has changed. On a miss they run
+        # cold and produce the artifacts from scratch.
+        #
+        # Container is started detached with `sleep infinity` so the
+        # post-build state can be `docker commit`ed (cache miss only).
+        # Bind-mount the workspace so generated files land on the
+        # host directly — `upload-artifact` and "Stage release" pick
+        # them up without a separate `docker cp` out.
+        run: |
+          docker run -d --name wasmify-build \
             -v "$PWD:/work" -w /work \
             -e WASMIFY_NON_INTERACTIVE=1 \
             --entrypoint sleep \
-            "$WASMIFY_IMAGE" infinity
-          docker exec wasmify-cold bash -ceuxo pipefail '
+            "${{ steps.base.outputs.image }}" infinity
+          docker exec wasmify-build bash -ceuxo pipefail '
             wasmify build --non-interactive
             wasmify generate-build
             wasmify parse-headers
@@ -148,34 +166,36 @@ jobs:
       - name: Commit and push cache image
         # Only on cache miss + push events. PR runs read from the
         # cache but never write, so a PR cannot poison the registry
-        # with partial state.
+        # with partial state. A cache hit means the existing image
+        # is still valid — re-publishing would just churn the digest.
         #
         # The bind-mount means /work writes are not part of the
         # container's committable layer. Copy every generated path
         # the .gitignore advertises as CI-regenerated into a
         # non-mounted path (/cache/output) inside the container,
-        # then `docker commit` it. The result is the wasmify image
-        # with one extra layer carrying the post-build outputs.
+        # then `docker commit` it. /root/.cache/bazel is naturally
+        # captured in the same commit because it lives outside the
+        # bind-mount.
         if: |
           steps.cache_pull.outputs.hit != 'true' &&
           github.event_name == 'push'
         run: |
-          docker exec wasmify-cold mkdir -p /cache/output
+          docker exec wasmify-build mkdir -p /cache/output
           for path in .wasmify build.json api-spec.json proto bridge googlesql.wasm googlesql.go; do
             if [ -e "$path" ]; then
-              docker cp "$path" "wasmify-cold:/cache/output/"
+              docker cp "$path" "wasmify-build:/cache/output/"
             fi
           done
-          docker commit wasmify-cold "${{ steps.cache_key.outputs.tag }}"
+          docker commit wasmify-build "${{ steps.cache_key.outputs.tag }}"
           docker tag "${{ steps.cache_key.outputs.tag }}" "${CACHE_IMAGE}:latest"
           docker push "${{ steps.cache_key.outputs.tag }}"
           docker push "${CACHE_IMAGE}:latest"
 
-      - name: Stop cold build container
+      - name: Stop build container
         # Always run so a failed pipeline does not leak the persistent
         # container into a successor step.
-        if: always() && steps.cache_pull.outputs.hit != 'true'
-        run: docker rm -f wasmify-cold 2>/dev/null || true
+        if: always()
+        run: docker rm -f wasmify-build 2>/dev/null || true
 
       - name: Stage release artifacts
         run: |
