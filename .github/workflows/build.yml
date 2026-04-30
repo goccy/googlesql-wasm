@@ -26,8 +26,10 @@ name: build
 # the workspace and run the pipeline inside the cache image. Miss ->
 # run the pipeline inside the wasmify image, then `docker commit`
 # the post-build container and push as `<image>:<submodule_sha>` and
-# `<image>:latest`. Only `push` events publish — `pull_request` runs
-# may read from the cache but never write.
+# `<image>:latest`. The pushed cache image is signed with an SLSA
+# build-provenance attestation so consumers can verify it came from
+# this workflow on the commit it claims. Only `push` events publish —
+# `pull_request` runs may read from the cache but never write.
 #
 # The image is run via `docker run` rather than the GHA `container:`
 # directive: googlesql's bazel build downloads a multi-GB LLVM
@@ -52,7 +54,11 @@ permissions:
   attestations: write
 
 env:
-  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:edge
+  # Pinned to a released wasmify version. Bump in lock-step with the
+  # toolchain image; the cache image inherits this base layer via
+  # `docker commit`, so a wasmify upgrade naturally rolls forward to
+  # the next cache-image push.
+  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.1.1
   CACHE_IMAGE: ghcr.io/${{ github.repository_owner }}/googlesql-wasm-cache
 
 jobs:
@@ -176,6 +182,11 @@ jobs:
         # then `docker commit` it. /root/.cache/bazel is naturally
         # captured in the same commit because it lives outside the
         # bind-mount.
+        #
+        # The push output's `digest: sha256:...` line is the manifest
+        # digest the attestation step below binds to. Both tags share
+        # one digest, so a single attestation covers them.
+        id: cache_push
         if: |
           steps.cache_pull.outputs.hit != 'true' &&
           github.event_name == 'push'
@@ -188,8 +199,32 @@ jobs:
           done
           docker commit wasmify-build "${{ steps.cache_key.outputs.tag }}"
           docker tag "${{ steps.cache_key.outputs.tag }}" "${CACHE_IMAGE}:latest"
-          docker push "${{ steps.cache_key.outputs.tag }}"
+          push_out=$(docker push "${{ steps.cache_key.outputs.tag }}" | tee /dev/stderr)
+          digest=$(printf '%s\n' "$push_out" | grep -oE 'sha256:[a-f0-9]{64}' | head -n1)
+          if [ -z "$digest" ]; then
+            echo "::error::could not extract digest from docker push output" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           docker push "${CACHE_IMAGE}:latest"
+
+      - name: Attest cache image build provenance
+        # Sign the just-pushed cache image with an SLSA build-provenance
+        # attestation. Consumers verify with
+        # `gh attestation verify oci://${CACHE_IMAGE}@<digest> --repo <owner>/googlesql-wasm`.
+        # Skipped on cache hits (nothing pushed) and on PR runs (no
+        # push permission). Also skipped on user-owned private repos —
+        # the attestations API rejects those — and re-enables itself
+        # automatically the moment the repo is made public.
+        if: |
+          steps.cache_pull.outputs.hit != 'true' &&
+          github.event_name == 'push' &&
+          github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.CACHE_IMAGE }}
+          subject-digest: ${{ steps.cache_push.outputs.digest }}
+          push-to-registry: true
 
       - name: Stop build container
         # Always run so a failed pipeline does not leak the persistent
