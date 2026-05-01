@@ -84,12 +84,30 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Resolve cache image tag from googlesql submodule SHA
+      - name: Resolve cache image tag from wasmify version + googlesql submodule SHA
+        # The cache image is a snapshot of the workspace AFTER a cold
+        # pipeline ran on top of WASMIFY_IMAGE. If the cache key were
+        # only the submodule SHA, bumping WASMIFY_IMAGE would still
+        # hit the same cached snapshot — the warm path runs the
+        # pipeline INSIDE the cache image (whose base is the previous
+        # wasmify version), so the new wasmify binaries never execute
+        # and the published googlesql.{wasm,go} stay at the old
+        # wasmify's output. Bake the wasmify image's tag into the
+        # cache key so a wasmify upgrade forces a cache miss and a
+        # genuine cold rebuild.
         id: cache_key
         run: |
           submodule_sha=$(git -C googlesql rev-parse HEAD)
+          # Strip the registry/repo prefix; keep only the tag (e.g. v0.1.2,
+          # edge, or a sha-pin). Falls back to "untagged" defensively if the
+          # env value is malformed.
+          wasmify_tag="${WASMIFY_IMAGE##*:}"
+          if [ -z "$wasmify_tag" ] || [ "$wasmify_tag" = "$WASMIFY_IMAGE" ]; then
+            wasmify_tag="untagged"
+          fi
           echo "submodule_sha=${submodule_sha}" >> "$GITHUB_OUTPUT"
-          echo "tag=${CACHE_IMAGE}:${submodule_sha}" >> "$GITHUB_OUTPUT"
+          echo "wasmify_tag=${wasmify_tag}" >> "$GITHUB_OUTPUT"
+          echo "tag=${CACHE_IMAGE}:${wasmify_tag}-${submodule_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
