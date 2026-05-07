@@ -287,7 +287,16 @@
       "absl::TimeZone",
       "googlesql_base::Status",
       "googlesql_base::StatusOr",
-      "RE2"
+      "RE2",
+      "google::protobuf::Descriptor",
+      "google::protobuf::DescriptorPool",
+      "google::protobuf::EnumDescriptor",
+      "google::protobuf::EnumValueDescriptor",
+      "google::protobuf::FieldDescriptor",
+      "google::protobuf::FileDescriptor",
+      "google::protobuf::FileDescriptorProto",
+      "google::protobuf::FileDescriptorSet",
+      "google::protobuf::OneofDescriptor"
     ],
     "ErrorTypes": {
       "absl::Status": "if (!{result}.ok()) { _pw.write_error(std::string({result}.message())); }",
@@ -295,9 +304,6 @@
       "googlesql_base::Status": "if (!{result}.ok()) { _pw.write_error(std::string({result}.message())); }",
       "googlesql_base::StatusOr": "if (!{result}.ok()) { _pw.write_error(std::string({result}.status().message())); }"
     },
-    "SkipClasses": [
-      "googlesql::SimpleModel"
-    ],
     "SkipHeaders": [
       "googlesql/parser/textmapper_lexer_adapter.h"
     ],
@@ -323,7 +329,12 @@
       "googlesql::LanguageOptions",
       "googlesql::ParserOptions",
       "googlesql::Unparse",
-      "googlesql::FormatSql"
+      "googlesql::FormatSql",
+      "googlesql::FixedOutputSchemaTVF",
+      "googlesql::ForwardInputSchemaToOutputSchemaTVF",
+      "googlesql::SQLTableValuedFunction",
+      "googlesql::TemplatedSQLTVF",
+      "googlesql::InsertSimpleTableValuedFunction"
     ],
     "ExportEnumPrefixes": [
       "googlesql::Resolved",
@@ -345,6 +356,9 @@
       "googlesql::IntervalCompareMode",
       "googlesql::WideNumberMode"
     ],
+    "ExportDependentLibraries": {
+      "protobuf": false
+    },
     "SkipStaticMethods": [
       "default_instance",
       "internal_default_instance",
@@ -363,6 +377,10 @@
       "absl::Status": {
         "OkExpr": "absl::OkStatus()",
         "ErrorExpr": "absl::InternalError({err_msg})"
+      },
+      "absl::StatusOr": {
+        "OkExpr": "absl::OkStatus()",
+        "ErrorExpr": "absl::InternalError({err_msg})"
       }
     },
     "UnsupportedStringTypes": [
@@ -379,6 +397,53 @@
     ],
     "SetLikeTypePrefixes": [
       "absl::flat_hash_set"
+    ],
+    "CallbackClasses": [
+      "googlesql::TableValuedFunction"
+    ],
+    "OwnershipTransferMethods": [
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedTable"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedFunction"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedTableValuedFunction"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedProcedure"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedPropertyGraph"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedCatalog"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedConstant"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedConnection"
+      },
+      {
+        "method": "googlesql::SimpleCatalog::AddOwnedModel"
+      },
+      {
+        "method": "googlesql::SimpleTable::AddColumn",
+        "signature": [
+          "const Column *",
+          "bool"
+        ]
+      },
+      {
+        "method": "googlesql::SimpleTable::AddColumn",
+        "signature": [
+          "absl::string_view",
+          "const Column *",
+          "bool"
+        ]
+      }
     ]
   },
   "skip": {
@@ -407,7 +472,7 @@
   },
   "phases": {
     "gen-proto": {
-      "completed_at": "2026-04-28T02:27:47Z",
+      "completed_at": "2026-05-07T08:31:47Z",
       "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
       "output_files": [
         "proto/googlesql.proto",
@@ -417,7 +482,7 @@
       ]
     },
     "parse-headers": {
-      "completed_at": "2026-04-28T02:27:46Z",
+      "completed_at": "2026-05-07T08:31:24Z",
       "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
       "output_files": [
         "api-spec.json"
