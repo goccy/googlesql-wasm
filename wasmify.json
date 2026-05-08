@@ -434,7 +434,11 @@
         "signature": [
           "const Column *",
           "bool"
-        ]
+        ],
+        "transfer_when": {
+          "param": "is_owned",
+          "equals": true
+        }
       },
       {
         "method": "googlesql::SimpleTable::AddColumn",
@@ -442,7 +446,33 @@
           "absl::string_view",
           "const Column *",
           "bool"
-        ]
+        ],
+        "transfer_when": {
+          "param": "is_owned",
+          "equals": true
+        }
+      },
+      {
+        "method": "googlesql::SimpleModel::AddInput",
+        "signature": [
+          "const Column *",
+          "bool"
+        ],
+        "transfer_when": {
+          "param": "is_owned",
+          "equals": true
+        }
+      },
+      {
+        "method": "googlesql::SimpleModel::AddOutput",
+        "signature": [
+          "const Column *",
+          "bool"
+        ],
+        "transfer_when": {
+          "param": "is_owned",
+          "equals": true
+        }
       }
     ]
   },
@@ -472,7 +502,7 @@
   },
   "phases": {
     "gen-proto": {
-      "completed_at": "2026-05-07T08:31:47Z",
+      "completed_at": "2026-05-08T05:50:38Z",
       "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
       "output_files": [
         "proto/googlesql.proto",
@@ -482,7 +512,7 @@
       ]
     },
     "parse-headers": {
-      "completed_at": "2026-05-07T08:31:24Z",
+      "completed_at": "2026-05-08T05:50:36Z",
       "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
       "output_files": [
         "api-spec.json"
