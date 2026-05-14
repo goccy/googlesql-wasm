@@ -58,7 +58,7 @@ env:
   # toolchain image; the cache image inherits this base layer via
   # `docker commit`, so a wasmify upgrade naturally rolls forward to
   # the next cache-image push.
-  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.1.6
+  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.1.7
   CACHE_IMAGE: ghcr.io/${{ github.repository_owner }}/googlesql-wasm-cache
 
 jobs:
