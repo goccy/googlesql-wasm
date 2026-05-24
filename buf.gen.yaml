@@ -4,6 +4,7 @@ inputs:
     paths:
       - proto/googlesql.proto
 plugins:
+  # wazero binding — single-file output at the work-dir root.
   - local: protoc-gen-wasmify-go
     out: .
     opt:
@@ -11,3 +12,15 @@ plugins:
       # bridge writes go_package=github.com/goccy/go-googlesql, so
       # the generated Go file lands at the root of this work dir.
       - module=github.com/goccy/go-googlesql
+
+  # wasm2go binding — emits googlesql.go plus a transpiled internal/
+  # tree under build/wasm2go/, so it does not collide with the wazero
+  # binding above. The wasm= path resolves against the CWD of
+  # `buf generate` (project root, i.e. /work under the container); the
+  # pipeline runs `wasmify wasm-build` first, so the file is present.
+  - local: protoc-gen-wasmify-go
+    out: build/wasm2go
+    opt:
+      - module=github.com/goccy/go-googlesql
+      - runtime=wasm2go
+      - wasm=.wasmify/wasm-build/output/googlesql.wasm

@@ -58,7 +58,7 @@ env:
   # toolchain image; the cache image inherits this base layer via
   # `docker commit`, so a wasmify upgrade naturally rolls forward to
   # the next cache-image push.
-  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.1.7
+  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.2.0
   CACHE_IMAGE: ghcr.io/${{ github.repository_owner }}/googlesql-wasm-cache
 
 jobs:
@@ -210,7 +210,7 @@ jobs:
           github.event_name == 'push'
         run: |
           docker exec wasmify-build mkdir -p /cache/output
-          for path in .wasmify build.json api-spec.json proto bridge googlesql.wasm googlesql.go; do
+          for path in .wasmify build.json api-spec.json proto bridge build googlesql.wasm googlesql.go; do
             if [ -e "$path" ]; then
               docker cp "$path" "wasmify-build:/cache/output/"
             fi
@@ -251,10 +251,23 @@ jobs:
         run: docker rm -f wasmify-build 2>/dev/null || true
 
       - name: Stage release artifacts
+        # Two binding flavors ship per release:
+        #   * wazero  -> single googlesql.go at repo root, attested by path.
+        #   * wasm2go -> googlesql.go + internal/ tree under build/wasm2go/,
+        #     bundled as a tarball plus a sha256sum-format manifest. The
+        #     manifest doubles as a downloadable asset AND as the input to
+        #     attest-build-provenance's `subject-checksums`, which records
+        #     every file's digest as an individual attestation subject —
+        #     so post-extraction users can run `gh attestation verify` on
+        #     any single file without custom tooling.
         run: |
           mkdir -p release
           cp .wasmify/wasm-build/output/googlesql.wasm release/
           cp googlesql.go release/
+
+          tar -czf release/googlesql_wasm2go.tar.gz -C build/wasm2go .
+          ( cd build/wasm2go && find . -type f -print0 | sort -z \
+              | xargs -0 sha256sum ) > release/googlesql_wasm2go.sha256
 
       - uses: actions/upload-artifact@v4
         with:
@@ -273,6 +286,17 @@ jobs:
             release/googlesql.wasm
             release/googlesql.go
 
+      - uses: actions/attest-build-provenance@v2
+        # wasm2go bundle: one attestation whose subjects are the per-file
+        # digests listed in the sha256 manifest. `gh attestation verify`
+        # matches by digest, so any file extracted from
+        # googlesql_wasm2go.tar.gz verifies against this attestation
+        # individually — the tarball wrapper itself does not need to be
+        # the subject.
+        if: github.event_name == 'push' && github.event.repository.visibility == 'public'
+        with:
+          subject-checksums: release/googlesql_wasm2go.sha256
+
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
@@ -287,10 +311,19 @@ jobs:
           path: release
       - uses: softprops/action-gh-release@v2
         with:
-          # Release assets: the wasm binary plus one bridge file per
-          # supported language. Currently only Go is supported, so
-          # `googlesql.go` is the sole bridge artifact. When a new
-          # language plugin is added, append its bridge file here.
+          # Release assets: the wasm binary plus the Go bindings in two
+          # runtime flavors.
+          #   * googlesql.wasm                  — raw wasi-sdk artifact.
+          #   * googlesql.go                    — wazero-runtime binding.
+          #   * googlesql_wasm2go.tar.gz        — wasm2go binding bundle
+          #                                       (googlesql.go + internal/).
+          #   * googlesql_wasm2go.sha256        — sha256sum-format manifest
+          #                                       for the tarball; doubles
+          #                                       as the attestation subject
+          #                                       checksum file.
+          # When a new language plugin is added, append its bridge file(s).
           files: |
             release/googlesql.wasm
             release/googlesql.go
+            release/googlesql_wasm2go.tar.gz
+            release/googlesql_wasm2go.sha256
