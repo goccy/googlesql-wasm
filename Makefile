@@ -41,6 +41,7 @@ wasm:
 # the googlesql submodule) survive.
 wasm-clean:
 	rm -rf .wasmify api-spec.json build.json proto bridge googlesql.go \
+	       build \
 	       .wasmify/wasm-build/output/googlesql.wasm
 
 # Refresh the cached toolchain image (runs `docker pull` so subsequent

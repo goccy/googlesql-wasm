@@ -37,5 +37,6 @@ go.work.sum
 /api-spec.json
 /proto/
 /bridge/
+/build/
 /googlesql.wasm
 /googlesql.go
