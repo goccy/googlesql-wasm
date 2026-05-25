@@ -69,7 +69,14 @@ jobs:
         # ubuntu-latest ships ~14 GB free on `/`; even with a cache
         # hit the image pull plus extracted outputs blow past that.
         # Reclaiming the preinstalled Android SDK / .NET / Haskell
-        # trees gets us to ~45 GB free.
+        # trees gets us to ~41 GB free.
+        #
+        # swap-storage stays `false`: protoc-gen-wasmify-go's wasm2go
+        # flavor processes a 40k-function / 3.2M-SSA-instruction wasm
+        # and was SIGKILL'd by the OOM killer during code emission
+        # when swap was stripped. Keeping the ~4 GB swap file gives
+        # the plugin enough headroom on a 16 GB runner; the disk
+        # we don't reclaim from swap is comfortably within budget.
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
@@ -78,7 +85,7 @@ jobs:
           haskell: true
           large-packages: false
           docker-images: false
-          swap-storage: true
+          swap-storage: false
 
       - uses: actions/checkout@v4
         with:
