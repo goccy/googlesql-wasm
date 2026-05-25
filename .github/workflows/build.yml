@@ -179,6 +179,12 @@ jobs:
         # Bind-mount the workspace so generated files land on the
         # host directly — `upload-artifact` and "Stage release" pick
         # them up without a separate `docker cp` out.
+        #
+        # `buf generate --timeout 30m` overrides buf's default 2-minute
+        # plugin timeout. The wasm2go flavor of protoc-gen-wasmify-go
+        # SSA-lowers 40k+ functions out of a 24 MB wasm and routinely
+        # spends several minutes on the pass; the default would kill
+        # it with `context deadline exceeded`.
         run: |
           docker run -d --name wasmify-build \
             -v "$PWD:/work" -w /work \
@@ -191,7 +197,7 @@ jobs:
             wasmify parse-headers
             wasmify gen-proto
             wasmify wasm-build --optimize --non-interactive
-            buf generate
+            buf generate --timeout 30m
           '
 
       - name: Commit and push cache image
