@@ -11,33 +11,38 @@ IMAGE ?= ghcr.io/goccy/wasmify:v0.3.0
 MEMORY ?= 14g
 CPUS   ?= 8
 
+# Bundle module path / go directive stamped into the wasm2go bundle's
+# go.mod. The bundle is released as a self-contained Go module, so it
+# needs a go.mod that declares the import path the bundle's own
+# `import "..."` and `//go:linkname` sites already embed. wasmify
+# writes that path into wasmify.json's `bridge.Wasm2GoImportPath`,
+# which the codegen reads back when it lays out the bundle — keep
+# this in sync with that field by deriving it from the JSON at build
+# time. The go directive matches the toolchain used by downstream
+# callers; bumping it forces a tag bump but lets the bundle use
+# newer asm features.
+WASM2GO_BUNDLE_DIR    := build/wasm2go/internal/wasm2go
+WASM2GO_BUNDLE_GO_VER := 1.25.0
+
 # Standard wasmify pipeline replayed inside the container, top-to-
 # bottom. `wasmify build` captures the native bazel build via the
 # compiler wrapper; subsequent phases consume its output. The final
 # `--optimize` chains a binaryen wasm-opt pass after the link.
+# `bundle-gomod` finalises the wasm2go bundle as a Go module so the
+# subsequent tarball step can ship it; it runs inside the container
+# so the file's owner matches the rest of the generated tree (the
+# container writes as root; a host-side write would hit EACCES on
+# the runner-owned mount-back).
 WASMIFY_PIPELINE = \
 	wasmify build --non-interactive && \
 	wasmify generate-build && \
 	wasmify parse-headers && \
 	wasmify gen-proto && \
 	wasmify wasm-build --optimize --non-interactive && \
-	buf generate
+	buf generate && \
+	make bundle-gomod
 
 .PHONY: all wasm wasm-clean bundle-gomod image-pull help
-
-# Module path stamped into the wasm2go bundle's go.mod. The bundle is
-# released as a self-contained Go module, so it needs a go.mod that
-# declares the import path the bundle's own `import "..."` and
-# `//go:linkname` sites already embed. wasmify writes that path into
-# wasmify.json's `bridge.Wasm2GoImportPath`, which the codegen reads
-# back when it lays out the bundle — keep this in sync with that
-# field by deriving it from the JSON at build time.
-WASM2GO_BUNDLE_DIR     := build/wasm2go/internal/wasm2go
-WASM2GO_MODULE_PATH    := $(shell jq -r '.bridge.Wasm2GoImportPath' wasmify.json 2>/dev/null)
-# Match the go directive used by the bundle's downstream callers.
-# Keeping it on a recent stable Go avoids forcing tag bumps every
-# time the asm sidecars use a newer toolchain feature.
-WASM2GO_BUNDLE_GO_VER  := 1.25.0
 
 # Build googlesql.wasm + googlesql.go from a clean checkout, exactly
 # the way the CI workflow at .github/workflows/build.yml does. Outputs:
@@ -51,24 +56,27 @@ wasm:
 		--memory=$(MEMORY) --cpus=$(CPUS) \
 		$(IMAGE) \
 		bash -c '$(WASMIFY_PIPELINE)'
-	@$(MAKE) bundle-gomod
 
 # Write go.mod into the wasm2go bundle so the released tarball is a
-# self-contained Go module. Runs on the host (not inside the wasmify
-# container) so it stays portable across image versions. The Go
-# toolchain is not required — we just write a literal manifest.
+# self-contained Go module. Parses bridge.Wasm2GoImportPath out of
+# wasmify.json with grep+sed so it works in the toolchain image (no
+# jq required). The Go toolchain is not required either — we just
+# write a literal manifest.
 bundle-gomod:
 	@if [ ! -d "$(WASM2GO_BUNDLE_DIR)" ]; then \
 		echo "$(WASM2GO_BUNDLE_DIR) does not exist — run 'make wasm' first" >&2; \
 		exit 1; \
 	fi
-	@if [ -z "$(WASM2GO_MODULE_PATH)" ] || [ "$(WASM2GO_MODULE_PATH)" = "null" ]; then \
+	@path=$$(grep -E '"Wasm2GoImportPath"[[:space:]]*:' wasmify.json \
+		| head -1 \
+		| sed -E 's/.*"Wasm2GoImportPath"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'); \
+	if [ -z "$$path" ]; then \
 		echo "wasmify.json bridge.Wasm2GoImportPath is empty; cannot stamp bundle go.mod" >&2; \
 		exit 1; \
-	fi
-	@printf 'module %s\n\ngo %s\n' "$(WASM2GO_MODULE_PATH)" "$(WASM2GO_BUNDLE_GO_VER)" \
-		> $(WASM2GO_BUNDLE_DIR)/go.mod
-	@echo "wrote $(WASM2GO_BUNDLE_DIR)/go.mod (module $(WASM2GO_MODULE_PATH))"
+	fi; \
+	printf 'module %s\n\ngo %s\n' "$$path" "$(WASM2GO_BUNDLE_GO_VER)" \
+		> $(WASM2GO_BUNDLE_DIR)/go.mod; \
+	echo "wrote $(WASM2GO_BUNDLE_DIR)/go.mod (module $$path)"
 
 # Drop everything wasmify regenerates so the next `make wasm` runs
 # from scratch. The committed inputs (wasmify.json, buf.{yaml,gen.yaml},

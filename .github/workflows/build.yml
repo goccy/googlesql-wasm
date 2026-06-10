@@ -198,6 +198,7 @@ jobs:
             wasmify gen-proto
             wasmify wasm-build --optimize --non-interactive
             buf generate --timeout 30m
+            make bundle-gomod
           '
 
       - name: Commit and push cache image
@@ -262,18 +263,6 @@ jobs:
         # container into a successor step.
         if: always()
         run: docker rm -f wasmify-build 2>/dev/null || true
-
-      - name: Stage wasm2go bundle go.mod
-        # The wasm2go binding ships as a self-contained Go module. The
-        # transpile pipeline emits the .go / .s sources and the data
-        # sidecars under build/wasm2go/internal/wasm2go/ but does NOT
-        # write a manifest, so the staged tarball would not be a
-        # valid `go get` target without one. `make bundle-gomod`
-        # reads bridge.Wasm2GoImportPath out of wasmify.json and
-        # writes the matching `module ...` / `go ...` lines into the
-        # bundle root. Idempotent — re-running just rewrites the
-        # same content.
-        run: make bundle-gomod
 
       - name: Stage release artifacts
         # Two binding flavors ship per release:
