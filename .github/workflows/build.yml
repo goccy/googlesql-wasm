@@ -265,23 +265,35 @@ jobs:
         run: docker rm -f wasmify-build 2>/dev/null || true
 
       - name: Stage release artifacts
-        # Two binding flavors ship per release:
-        #   * wazero  -> single googlesql.go at repo root, attested by path.
-        #   * wasm2go -> the build/wasm2go/internal/wasm2go/ bundle —
-        #     a self-contained Go module after the bundle-gomod step
-        #     above. We tarball its contents (go.mod + alias.go +
-        #     wasm2go.go + per-chunk amd64.s / arm64.s + data.bin)
-        #     plus a sha256sum-format manifest. The manifest doubles
-        #     as a downloadable asset AND as the input to
-        #     attest-build-provenance's `subject-checksums`, which
-        #     records every file's digest as an individual attestation
-        #     subject — so post-extraction users can run
-        #     `gh attestation verify` on any single file without
-        #     custom tooling.
+        # Two bridge flavors plus the wasm2go runtime bundle ship per
+        # release:
+        #   * googlesql_wazero.go     — wazero-runtime bridge (the file
+        #                               generated at repo root).
+        #   * googlesql_wasm2go.go    — wasm2go-runtime bridge (the file
+        #                               generated under build/wasm2go/).
+        #     Each is attested by path so consumers can run
+        #     `gh attestation verify <file>` after renaming locally.
+        #   * googlesql_wasm2go.tar.gz — the build/wasm2go/internal/wasm2go/
+        #     bundle, a self-contained Go module after the bundle-gomod
+        #     step above (go.mod + alias.go + wasm2go.go + per-chunk
+        #     amd64.s / arm64.s + data.bin), with a sha256sum-format
+        #     manifest. The manifest doubles as a downloadable asset
+        #     AND as the input to attest-build-provenance's
+        #     `subject-checksums`, which records every file's digest
+        #     as an individual attestation subject — so post-extraction
+        #     users can run `gh attestation verify` on any single file
+        #     without custom tooling.
+        #
+        # Both bridges are renamed at stage time so the release-asset
+        # filename advertises which runtime each file targets. The
+        # consumer is expected to drop the file into its own tree as
+        # `googlesql.go`; `gh attestation verify` matches by content
+        # digest, so the rename does not invalidate the attestation.
         run: |
           mkdir -p release
           cp .wasmify/wasm-build/output/googlesql.wasm release/
-          cp googlesql.go release/
+          cp googlesql.go                  release/googlesql_wazero.go
+          cp build/wasm2go/googlesql.go    release/googlesql_wasm2go.go
 
           tar -czf release/googlesql_wasm2go.tar.gz -C build/wasm2go/internal/wasm2go .
           ( cd build/wasm2go/internal/wasm2go && find . -type f -print0 | sort -z \
@@ -302,7 +314,8 @@ jobs:
         with:
           subject-path: |
             release/googlesql.wasm
-            release/googlesql.go
+            release/googlesql_wazero.go
+            release/googlesql_wasm2go.go
 
       - uses: actions/attest-build-provenance@v2
         # wasm2go bundle: one attestation whose subjects are the per-file
@@ -329,10 +342,11 @@ jobs:
           path: release
       - uses: softprops/action-gh-release@v2
         with:
-          # Release assets: the wasm binary plus the Go bindings in two
-          # runtime flavors.
+          # Release assets: the wasm binary plus two bridge flavors
+          # plus the wasm2go runtime bundle.
           #   * googlesql.wasm                  — raw wasi-sdk artifact.
-          #   * googlesql.go                    — wazero-runtime binding.
+          #   * googlesql_wazero.go             — wazero-runtime bridge.
+          #   * googlesql_wasm2go.go            — wasm2go-runtime bridge.
           #   * googlesql_wasm2go.tar.gz        — wasm2go bundle as a
           #                                       self-contained Go module
           #                                       (go.mod + alias.go +
@@ -346,6 +360,8 @@ jobs:
           # When a new language plugin is added, append its bridge file(s).
           files: |
             release/googlesql.wasm
-            release/googlesql.go
+            release/googlesql_wazero.go
+            release/googlesql_wasm2go.go
             release/googlesql_wasm2go.tar.gz
+            release/googlesql_wasm2go.sha256
             release/googlesql_wasm2go.sha256
