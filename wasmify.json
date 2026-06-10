@@ -308,6 +308,7 @@
       "googlesql/parser/textmapper_lexer_adapter.h"
     ],
     "GoPackage": "github.com/goccy/go-googlesql;googlesql",
+    "Wasm2GoImportPath": "github.com/goccy/googlesqlwasm2go",
     "ExportFunctions": [
       "googlesql::ParseStatement",
       "googlesql::ParseScript",
@@ -502,7 +503,7 @@
   },
   "phases": {
     "gen-proto": {
-      "completed_at": "2026-05-08T05:50:38Z",
+      "completed_at": "2026-06-05T08:30:59Z",
       "upstream_commit": "36dd14aa0657ea299725504bc0f938732f58f380",
       "output_files": [
         "proto/googlesql.proto",

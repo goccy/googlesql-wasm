@@ -58,7 +58,7 @@ env:
   # toolchain image; the cache image inherits this base layer via
   # `docker commit`, so a wasmify upgrade naturally rolls forward to
   # the next cache-image push.
-  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.2.1
+  WASMIFY_IMAGE: ghcr.io/goccy/wasmify:v0.3.0
   CACHE_IMAGE: ghcr.io/${{ github.repository_owner }}/googlesql-wasm-cache
 
 jobs:
@@ -263,23 +263,39 @@ jobs:
         if: always()
         run: docker rm -f wasmify-build 2>/dev/null || true
 
+      - name: Stage wasm2go bundle go.mod
+        # The wasm2go binding ships as a self-contained Go module. The
+        # transpile pipeline emits the .go / .s sources and the data
+        # sidecars under build/wasm2go/internal/wasm2go/ but does NOT
+        # write a manifest, so the staged tarball would not be a
+        # valid `go get` target without one. `make bundle-gomod`
+        # reads bridge.Wasm2GoImportPath out of wasmify.json and
+        # writes the matching `module ...` / `go ...` lines into the
+        # bundle root. Idempotent — re-running just rewrites the
+        # same content.
+        run: make bundle-gomod
+
       - name: Stage release artifacts
         # Two binding flavors ship per release:
         #   * wazero  -> single googlesql.go at repo root, attested by path.
-        #   * wasm2go -> googlesql.go + internal/ tree under build/wasm2go/,
-        #     bundled as a tarball plus a sha256sum-format manifest. The
-        #     manifest doubles as a downloadable asset AND as the input to
-        #     attest-build-provenance's `subject-checksums`, which records
-        #     every file's digest as an individual attestation subject —
-        #     so post-extraction users can run `gh attestation verify` on
-        #     any single file without custom tooling.
+        #   * wasm2go -> the build/wasm2go/internal/wasm2go/ bundle —
+        #     a self-contained Go module after the bundle-gomod step
+        #     above. We tarball its contents (go.mod + alias.go +
+        #     wasm2go.go + per-chunk amd64.s / arm64.s + data.bin)
+        #     plus a sha256sum-format manifest. The manifest doubles
+        #     as a downloadable asset AND as the input to
+        #     attest-build-provenance's `subject-checksums`, which
+        #     records every file's digest as an individual attestation
+        #     subject — so post-extraction users can run
+        #     `gh attestation verify` on any single file without
+        #     custom tooling.
         run: |
           mkdir -p release
           cp .wasmify/wasm-build/output/googlesql.wasm release/
           cp googlesql.go release/
 
-          tar -czf release/googlesql_wasm2go.tar.gz -C build/wasm2go .
-          ( cd build/wasm2go && find . -type f -print0 | sort -z \
+          tar -czf release/googlesql_wasm2go.tar.gz -C build/wasm2go/internal/wasm2go .
+          ( cd build/wasm2go/internal/wasm2go && find . -type f -print0 | sort -z \
               | xargs -0 sha256sum ) > release/googlesql_wasm2go.sha256
 
       - uses: actions/upload-artifact@v4
@@ -328,12 +344,16 @@ jobs:
           # runtime flavors.
           #   * googlesql.wasm                  — raw wasi-sdk artifact.
           #   * googlesql.go                    — wazero-runtime binding.
-          #   * googlesql_wasm2go.tar.gz        — wasm2go binding bundle
-          #                                       (googlesql.go + internal/).
+          #   * googlesql_wasm2go.tar.gz        — wasm2go bundle as a
+          #                                       self-contained Go module
+          #                                       (go.mod + alias.go +
+          #                                       wasm2go.go + per-chunk
+          #                                       amd64.s / arm64.s +
+          #                                       data.bin).
           #   * googlesql_wasm2go.sha256        — sha256sum-format manifest
-          #                                       for the tarball; doubles
-          #                                       as the attestation subject
-          #                                       checksum file.
+          #                                       for the tarball contents;
+          #                                       doubles as the attestation
+          #                                       subject checksum file.
           # When a new language plugin is added, append its bridge file(s).
           files: |
             release/googlesql.wasm
