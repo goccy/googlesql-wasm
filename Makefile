@@ -3,7 +3,7 @@
 # to pin a specific SHA or to point at a private registry — e.g.
 # `make wasm IMAGE=localhost:5001/wasmify:local` while iterating on a
 # wasmify branch before publishing to ghcr.
-IMAGE ?= ghcr.io/goccy/wasmify:v0.4.6
+IMAGE ?= ghcr.io/goccy/wasmify:v0.4.7
 
 # Resource limits for the container that runs the wasm-build pipeline.
 # googlesql's compile + link peak around ~6 GB RAM; bazel parallelism
