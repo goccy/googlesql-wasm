@@ -45,6 +45,12 @@
       "description": "SQL pretty-printer / formatter (FormatSQL)."
     },
     {
+      "name": "lenient_formatter",
+      "type": "library",
+      "build_target": "//googlesql/public:lenient_formatter",
+      "description": "Comment-preserving lenient SQL formatter (LenientFormatSql) and FormatterOptions."
+    },
+    {
       "name": "simple_catalog",
       "type": "library",
       "build_target": "//googlesql/public:simple_catalog",
@@ -273,7 +279,8 @@
   "user_selection": {
     "target_names": [
       "analyzer",
-      "sql_formatter"
+      "sql_formatter",
+      "lenient_formatter"
     ],
     "build_type": "library"
   },
@@ -331,6 +338,8 @@
       "googlesql::ParserOptions",
       "googlesql::Unparse",
       "googlesql::FormatSql",
+      "googlesql::LenientFormatSql",
+      "googlesql::FormatterOptions",
       "googlesql::FixedOutputSchemaTVF",
       "googlesql::ForwardInputSchemaToOutputSchemaTVF",
       "googlesql::SQLTableValuedFunction",
