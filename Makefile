@@ -33,13 +33,15 @@ WASM2GO_BUNDLE_GO_VER := 1.25.0
 # so the file's owner matches the rest of the generated tree (the
 # container writes as root; a host-side write would hit EACCES on
 # the runner-owned mount-back).
+# `buf generate --timeout 30m` matches build.yml: the wasm2go plugin
+# runs for several minutes, past buf's default 2-minute timeout.
 WASMIFY_PIPELINE = \
 	wasmify build --non-interactive && \
 	wasmify generate-build && \
 	wasmify parse-headers && \
 	wasmify gen-proto && \
 	wasmify wasm-build --optimize --non-interactive && \
-	buf generate && \
+	buf generate --timeout 30m && \
 	make bundle-gomod
 
 .PHONY: all wasm wasm-clean bundle-gomod image-pull help
