@@ -55,7 +55,7 @@ wasmify parse-headers              # public C++ headers → api-spec.json
 wasmify gen-proto                  # api-spec.json → proto/ + bridge/
 wasmify wasm-build --optimize \
         --non-interactive          # build.json + bridge → googlesql.wasm + wasm-opt
-buf generate                       # proto/ → googlesql.go
+buf generate --timeout 30m         # proto/ → googlesql.go (wasm2go plugin outlasts the 2m default)
 ```
 
 Resource defaults (`MEMORY=14g CPUS=8`) cover the googlesql peak
